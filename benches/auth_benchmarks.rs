@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 
 // Benchmark password hashing (this is CPU-intensive)
 fn benchmark_password_hashing(c: &mut Criterion) {
@@ -13,9 +14,10 @@ fn benchmark_password_hashing(c: &mut Criterion) {
 
         b.iter(|| {
             let salt = SaltString::generate(&mut OsRng);
-            argon2
+            let hash = argon2
                 .hash_password(black_box(password), &salt)
-                .expect("Failed to hash password")
+                .expect("Failed to hash password");
+            hash.to_string() // Return owned String instead of reference
         })
     });
 }
