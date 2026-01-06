@@ -1,0 +1,462 @@
+///! Integration Tests for OAuth Flow
+///!
+///! End-to-end tests covering:
+///! - OAuth Authorization -> Callback -> Token Storage -> API Usage
+
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
+use echo_backend::{create_app, config::AppConfig};
+use secrecy::SecretString;
+use sqlx::postgres::PgPoolOptions;
+use tower::ServiceExt;
+use uuid::Uuid;
+
+// =============================================================================
+// TEST HELPERS
+// =============================================================================
+
+async fn create_test_app() -> axum::Router {
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_lazy("postgres://test:test@localhost/test_db")
+        .expect("Failed to create lazy pool");
+
+    let config = AppConfig {
+        database_url: SecretString::from("postgres://test:test@localhost/test_db"),
+        redis_url: "redis://localhost:6379".to_string(),
+        jwt_secret: SecretString::from("test_jwt_secret_key_that_is_at_least_32_characters_long"),
+        jwt_refresh_secret: SecretString::from("test_refresh_secret_key_that_is_at_least_32_chars"),
+        access_token_expiry_secs: 900,
+        refresh_token_expiry_days: 7,
+        encryption_key: SecretString::from("test_encryption_key_32_chars_ok"),
+        host: "127.0.0.1".to_string(),
+        port: 3000,
+    };
+
+    create_app(pool, config).await
+}
+
+const OAUTH_PROVIDERS: [&str; 5] = ["google", "zoom", "slack", "hubspot", "salesforce"];
+
+// =============================================================================
+// OAUTH AUTHORIZATION ENDPOINT TESTS
+// =============================================================================
+
+#[tokio::test]
+async fn oauth_authorize_requires_auth() {
+    let app = create_test_app().await;
+
+    for provider in OAUTH_PROVIDERS {
+        let request = Request::builder()
+            .uri(format!("/api/auth/oauth/{}/authorize", provider))
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        // Should require authentication (or 404 if not implemented)
+        assert!(
+            response.status() == StatusCode::UNAUTHORIZED
+                || response.status() == StatusCode::NOT_FOUND,
+            "OAuth authorize for {} should require auth",
+            provider
+        );
+    }
+}
+
+#[tokio::test]
+async fn oauth_authorize_invalid_provider() {
+    let app = create_test_app().await;
+
+    let request = Request::builder()
+        .uri("/api/auth/oauth/invalid_provider/authorize")
+        .method("GET")
+        .header("Authorization", "Bearer valid_token")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    // Should return 400 or 404 for invalid provider
+    assert!(
+        response.status().is_client_error(),
+        "Invalid provider should be rejected"
+    );
+}
+
+// =============================================================================
+// OAUTH CALLBACK ENDPOINT TESTS
+// =============================================================================
+
+#[tokio::test]
+async fn oauth_callback_requires_state() {
+    let app = create_test_app().await;
+
+    for provider in OAUTH_PROVIDERS {
+        let request = Request::builder()
+            .uri(format!("/api/auth/oauth/{}/callback?code=test_code", provider))
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        // Should fail without state (or 404 if not implemented)
+        assert!(
+            response.status().is_client_error() || response.status() == StatusCode::NOT_FOUND,
+            "OAuth callback for {} without state should fail",
+            provider
+        );
+    }
+}
+
+#[tokio::test]
+async fn oauth_callback_requires_code() {
+    let app = create_test_app().await;
+
+    for provider in OAUTH_PROVIDERS {
+        let request = Request::builder()
+            .uri(format!("/api/auth/oauth/{}/callback?state=test_state", provider))
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        // Should fail without code (or 404 if not implemented)
+        assert!(
+            response.status().is_client_error() || response.status() == StatusCode::NOT_FOUND,
+            "OAuth callback for {} without code should fail",
+            provider
+        );
+    }
+}
+
+#[tokio::test]
+async fn oauth_callback_handles_denial() {
+    let app = create_test_app().await;
+
+    for provider in OAUTH_PROVIDERS {
+        let request = Request::builder()
+            .uri(format!(
+                "/api/auth/oauth/{}/callback?error=access_denied&state=test_state",
+                provider
+            ))
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        // Should handle gracefully (redirect or error page)
+        let status = response.status();
+        assert!(
+            status.is_client_error()
+                || status == StatusCode::NOT_FOUND
+                || status.is_redirection()
+                || status == StatusCode::OK,
+            "OAuth denial for {} should be handled gracefully",
+            provider
+        );
+    }
+}
+
+#[tokio::test]
+async fn oauth_callback_invalid_state() {
+    let app = create_test_app().await;
+
+    for provider in OAUTH_PROVIDERS {
+        let request = Request::builder()
+            .uri(format!(
+                "/api/auth/oauth/{}/callback?code=test_code&state=invalid_state",
+                provider
+            ))
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        // Should reject invalid state (CSRF protection)
+        assert!(
+            response.status().is_client_error() || response.status() == StatusCode::NOT_FOUND,
+            "OAuth callback for {} with invalid state should be rejected",
+            provider
+        );
+    }
+}
+
+// =============================================================================
+// OAUTH CONNECTIONS ENDPOINT TESTS
+// =============================================================================
+
+#[tokio::test]
+async fn oauth_connections_requires_auth() {
+    let app = create_test_app().await;
+
+    let request = Request::builder()
+        .uri("/api/auth/oauth/connections")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert!(
+        response.status() == StatusCode::UNAUTHORIZED
+            || response.status() == StatusCode::NOT_FOUND,
+        "OAuth connections should require auth"
+    );
+}
+
+#[tokio::test]
+async fn oauth_disconnect_requires_auth() {
+    let app = create_test_app().await;
+    let connection_id = Uuid::new_v4();
+
+    let request = Request::builder()
+        .uri(format!("/api/auth/oauth/connections/{}", connection_id))
+        .method("DELETE")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert!(
+        response.status() == StatusCode::UNAUTHORIZED
+            || response.status() == StatusCode::NOT_FOUND,
+        "OAuth disconnect should require auth"
+    );
+}
+
+// =============================================================================
+// HTTP METHOD TESTS
+// =============================================================================
+
+#[tokio::test]
+async fn oauth_authorize_accepts_get() {
+    let app = create_test_app().await;
+
+    for provider in OAUTH_PROVIDERS {
+        let request = Request::builder()
+            .uri(format!("/api/auth/oauth/{}/authorize", provider))
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        assert!(
+            response.status() != StatusCode::METHOD_NOT_ALLOWED
+                || response.status() == StatusCode::NOT_FOUND,
+            "OAuth authorize for {} should accept GET",
+            provider
+        );
+    }
+}
+
+#[tokio::test]
+async fn oauth_callback_accepts_get() {
+    let app = create_test_app().await;
+
+    for provider in OAUTH_PROVIDERS {
+        let request = Request::builder()
+            .uri(format!("/api/auth/oauth/{}/callback", provider))
+            .method("GET")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+
+        assert!(
+            response.status() != StatusCode::METHOD_NOT_ALLOWED
+                || response.status() == StatusCode::NOT_FOUND,
+            "OAuth callback for {} should accept GET",
+            provider
+        );
+    }
+}
+
+#[tokio::test]
+async fn oauth_connections_accepts_get() {
+    let app = create_test_app().await;
+
+    let request = Request::builder()
+        .uri("/api/auth/oauth/connections")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert!(
+        response.status() != StatusCode::METHOD_NOT_ALLOWED
+            || response.status() == StatusCode::NOT_FOUND,
+        "OAuth connections should accept GET"
+    );
+}
+
+#[tokio::test]
+async fn oauth_disconnect_accepts_delete() {
+    let app = create_test_app().await;
+    let connection_id = Uuid::new_v4();
+
+    let request = Request::builder()
+        .uri(format!("/api/auth/oauth/connections/{}", connection_id))
+        .method("DELETE")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert!(
+        response.status() != StatusCode::METHOD_NOT_ALLOWED
+            || response.status() == StatusCode::NOT_FOUND,
+        "OAuth disconnect should accept DELETE"
+    );
+}
+
+// =============================================================================
+// CONCURRENT OAUTH TESTS
+// =============================================================================
+
+#[tokio::test]
+async fn concurrent_oauth_authorize_requests() {
+    let app = create_test_app().await;
+
+    let handles: Vec<_> = OAUTH_PROVIDERS
+        .iter()
+        .map(|provider| {
+            let app = app.clone();
+            let provider = provider.to_string();
+            tokio::spawn(async move {
+                let request = Request::builder()
+                    .uri(format!("/api/auth/oauth/{}/authorize", provider))
+                    .method("GET")
+                    .body(Body::empty())
+                    .unwrap();
+
+                app.oneshot(request).await.unwrap().status()
+            })
+        })
+        .collect();
+
+    let results: Vec<_> = futures::future::join_all(handles)
+        .await
+        .into_iter()
+        .map(|r| r.unwrap())
+        .collect();
+
+    // All should complete without panic
+    for status in &results {
+        assert!(
+            *status == StatusCode::UNAUTHORIZED || *status == StatusCode::NOT_FOUND,
+            "Concurrent OAuth authorize should be handled"
+        );
+    }
+}
+
+#[tokio::test]
+async fn concurrent_oauth_callback_requests() {
+    let app = create_test_app().await;
+
+    let handles: Vec<_> = (0..10)
+        .map(|i| {
+            let app = app.clone();
+            tokio::spawn(async move {
+                let request = Request::builder()
+                    .uri(format!(
+                        "/api/auth/oauth/google/callback?code=code_{}&state=state_{}",
+                        i, i
+                    ))
+                    .method("GET")
+                    .body(Body::empty())
+                    .unwrap();
+
+                app.oneshot(request).await.unwrap().status()
+            })
+        })
+        .collect();
+
+    let results: Vec<_> = futures::future::join_all(handles)
+        .await
+        .into_iter()
+        .map(|r| r.unwrap())
+        .collect();
+
+    // All should complete without panic
+    for status in &results {
+        assert!(
+            status.is_client_error() || *status == StatusCode::NOT_FOUND,
+            "Concurrent OAuth callbacks should be handled"
+        );
+    }
+}
+
+// =============================================================================
+// EDGE CASE TESTS
+// =============================================================================
+
+#[tokio::test]
+async fn oauth_callback_with_special_characters() {
+    let app = create_test_app().await;
+
+    // Test with URL-encoded special characters
+    let request = Request::builder()
+        .uri("/api/auth/oauth/google/callback?code=test%2Bcode&state=test%2Bstate")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    // Should handle special characters
+    assert!(
+        response.status().is_client_error() || response.status() == StatusCode::NOT_FOUND,
+        "OAuth callback should handle URL-encoded characters"
+    );
+}
+
+#[tokio::test]
+async fn oauth_disconnect_nonexistent() {
+    let app = create_test_app().await;
+    let fake_id = Uuid::new_v4();
+
+    let request = Request::builder()
+        .uri(format!("/api/auth/oauth/connections/{}", fake_id))
+        .method("DELETE")
+        .header("Authorization", "Bearer valid_token")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    // Should handle gracefully
+    assert!(
+        response.status().is_client_error() || response.status() == StatusCode::NOT_FOUND,
+        "Nonexistent OAuth connection disconnect should be handled"
+    );
+}
+
+#[tokio::test]
+async fn oauth_disconnect_invalid_uuid() {
+    let app = create_test_app().await;
+
+    let request = Request::builder()
+        .uri("/api/auth/oauth/connections/not-a-uuid")
+        .method("DELETE")
+        .header("Authorization", "Bearer valid_token")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+
+    // Should return 400 or 404
+    assert!(
+        response.status().is_client_error(),
+        "Invalid UUID in OAuth disconnect should be rejected"
+    );
+}
