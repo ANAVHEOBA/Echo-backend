@@ -39,11 +39,31 @@ impl Worker {
     async fn process_job(&self, job: Job) -> anyhow::Result<()> {
         match job.task_type.as_str() {
             "email_delivery" => self.handle_email_delivery(job).await,
+            "event.process.slack" => self.handle_event_processing(job).await,
             _ => {
                 tracing::warn!("Unknown job type: {}", job.task_type);
                 Ok(())
             }
         }
+    }
+    
+    async fn handle_event_processing(&self, job: Job) -> anyhow::Result<()> {
+        use uuid::Uuid;
+        use crate::modules::events::processing::process_slack_event;
+        
+        let event_id_str = job.payload.get("event_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing event_id in job payload"))?;
+        
+        let event_id = Uuid::parse_str(event_id_str)
+            .map_err(|e| anyhow::anyhow!("Invalid event_id UUID: {}", e))?;
+        
+        tracing::info!("Processing Slack event: {}", event_id);
+        
+        process_slack_event(event_id, &self.state.pool).await?;
+        
+        tracing::info!("Successfully processed Slack event: {}", event_id);
+        Ok(())
     }
 
     async fn handle_email_delivery(&self, job: Job) -> anyhow::Result<()> {

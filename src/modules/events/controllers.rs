@@ -58,11 +58,21 @@ pub async fn slack_webhook(
                 Ok(stored_event) => {
                     tracing::info!("Stored Slack event: {}", stored_event.id);
                     
-                    // TODO: Enqueue job for processing
-                    // let job = Job::new("event.slack.message", serde_json::json!({
-                    //     "event_id": stored_event.id
-                    // }));
-                    // queue.enqueue(&job).await?;
+                    // Enqueue job for processing
+                    let job = crate::services::queue::Job::new(
+                        "event.process.slack",
+                        serde_json::json!({
+                            "event_id": stored_event.id.to_string()
+                        })
+                    );
+                    
+                    let queue = crate::services::queue::Queue::new(state.redis.clone());
+                    if let Err(e) = queue.enqueue(&job).await {
+                        tracing::error!("Failed to enqueue processing job: {}", e);
+                        // Don't fail the request even if job enqueueing fails
+                    } else {
+                        tracing::debug!("Enqueued processing job for event: {}", stored_event.id);
+                    }
                     
                     return Ok(Json(serde_json::json!({ "ok": true })));
                 }
