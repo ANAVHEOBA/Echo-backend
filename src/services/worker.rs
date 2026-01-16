@@ -49,7 +49,7 @@ impl Worker {
     
     async fn handle_event_processing(&self, job: Job) -> anyhow::Result<()> {
         use uuid::Uuid;
-        use crate::modules::events::processing::process_slack_event;
+        use crate::modules::events::services::processing::process_slack_event;
         
         let event_id_str = job.payload.get("event_id")
             .and_then(|v| v.as_str())

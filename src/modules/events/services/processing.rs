@@ -2,8 +2,8 @@ use anyhow::{anyhow, Result};
 use uuid::Uuid;
 
 use crate::config::DbPool;
-use super::models::Event;
-use super::crud;
+use crate::modules::events::models::Event;
+use crate::modules::events::crud;
 use super::extractors::{extract_business_data, ExtractedData};
 use crate::modules::crm_integration::models::Opportunity;
 
