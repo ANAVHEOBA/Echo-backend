@@ -5,7 +5,7 @@ use crate::AppState;
 use crate::middleware::require_auth;
 use super::controller;
 
-pub fn auth_routes() -> Router<Arc<AppState>> {
+pub fn auth_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
     // Public routes - no authentication required
     let public_routes = Router::new()
         .route("/register", post(controller::register))
@@ -16,7 +16,7 @@ pub fn auth_routes() -> Router<Arc<AppState>> {
     // Protected routes - require valid JWT
     let protected_routes = Router::new()
         .route("/me", get(controller::me))
-        .layer(middleware::from_fn(require_auth));
+        .layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
         .merge(public_routes)

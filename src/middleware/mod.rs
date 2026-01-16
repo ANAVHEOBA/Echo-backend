@@ -1,3 +1,3 @@
 mod auth;
 
-pub use auth::{require_auth, AuthState};
+pub use auth::require_auth;

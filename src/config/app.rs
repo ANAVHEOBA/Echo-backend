@@ -12,6 +12,11 @@ pub struct AppConfig {
     pub encryption_key: SecretString,
     pub host: String,
     pub port: u16,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_username: String,
+    pub smtp_password: SecretString,
+    pub email_from: String,
 }
 
 impl AppConfig {
@@ -50,6 +55,19 @@ impl AppConfig {
                 .unwrap_or_else(|_| "3000".to_string())
                 .parse()
                 .map_err(|_| ConfigError::Invalid("PORT"))?,
+            smtp_host: env::var("SMTP_HOST").unwrap_or_else(|_| "smtp.gmail.com".to_string()),
+            smtp_port: env::var("SMTP_PORT")
+                .unwrap_or_else(|_| "587".to_string())
+                .parse()
+                .map_err(|_| ConfigError::Invalid("SMTP_PORT"))?,
+            smtp_username: env::var("SMTP_USERNAME")
+                .map_err(|_| ConfigError::Missing("SMTP_USERNAME"))?,
+            smtp_password: SecretString::from(
+                env::var("SMTP_PASSWORD")
+                    .map_err(|_| ConfigError::Missing("SMTP_PASSWORD"))?,
+            ),
+            email_from: env::var("EMAIL_FROM")
+                .map_err(|_| ConfigError::Missing("EMAIL_FROM"))?,
         })
     }
 
@@ -67,6 +85,10 @@ impl AppConfig {
 
     pub fn encryption_key(&self) -> &str {
         self.encryption_key.expose_secret()
+    }
+
+    pub fn smtp_password(&self) -> &str {
+        self.smtp_password.expose_secret()
     }
 }
 

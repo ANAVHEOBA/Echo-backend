@@ -1,4 +1,5 @@
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -19,7 +20,29 @@ async fn main() {
 
     tracing::info!("Connected to PostgreSQL");
 
-    let app = echo_backend::create_app(pool, config).await;
+    let redis = echo_backend::config::create_redis_pool(&config)
+        .await
+        .expect("Failed to connect to Redis");
+
+    tracing::info!("Connected to Redis");
+
+    let email_service = Arc::new(echo_backend::services::SmtpEmailService::new(&config));
+
+    // Initialize AppState for Worker
+    let app_state = Arc::new(echo_backend::AppState {
+        pool: pool.clone(),
+        redis: redis.clone(),
+        config: Arc::new(config.clone()),
+        email_service,
+    });
+
+    // Start Background Worker
+    let worker = echo_backend::services::worker::Worker::new(app_state);
+    tokio::spawn(async move {
+        worker.run().await;
+    });
+
+    let app = echo_backend::create_app(pool, redis, config).await;
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     tracing::info!("Server running on http://localhost:3000");

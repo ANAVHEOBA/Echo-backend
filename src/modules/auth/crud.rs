@@ -28,7 +28,8 @@ impl<'a> UserCrud<'a> {
 
         sqlx::query_as::<_, User>(
             r#"INSERT INTO users (email, password_hash, first_name, last_name, role)
-               VALUES ($1, $2, $3, $4, 'member') RETURNING *"#,
+               VALUES ($1, $2, $3, $4, 'member') 
+               RETURNING id, email, password_hash, first_name, last_name, organization_id, role::TEXT, email_verified, email_verified_at, failed_login_attempts, locked_until, created_at, updated_at, deleted_at"#,
         )
         .bind(email.to_lowercase().trim())
         .bind(&password_hash)
@@ -40,19 +41,23 @@ impl<'a> UserCrud<'a> {
     }
 
     pub async fn find_by_id(&self, id: &Uuid) -> Result<Option<User>, ApiError> {
-        sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-            .bind(id)
-            .fetch_optional(self.pool)
-            .await
-            .map_err(ApiError::from)
+        sqlx::query_as::<_, User>(
+            "SELECT id, email, password_hash, first_name, last_name, organization_id, role::TEXT, email_verified, email_verified_at, failed_login_attempts, locked_until, created_at, updated_at, deleted_at FROM users WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_optional(self.pool)
+        .await
+        .map_err(ApiError::from)
     }
 
     pub async fn find_by_email(&self, email: &str) -> Result<Option<User>, ApiError> {
-        sqlx::query_as::<_, User>("SELECT * FROM users WHERE LOWER(email) = LOWER($1)")
-            .bind(email.trim())
-            .fetch_optional(self.pool)
-            .await
-            .map_err(ApiError::from)
+        sqlx::query_as::<_, User>(
+            "SELECT id, email, password_hash, first_name, last_name, organization_id, role::TEXT, email_verified, email_verified_at, failed_login_attempts, locked_until, created_at, updated_at, deleted_at FROM users WHERE LOWER(email) = LOWER($1)"
+        )
+        .bind(email.trim())
+        .fetch_optional(self.pool)
+        .await
+        .map_err(ApiError::from)
     }
 
     pub async fn email_exists(&self, email: &str) -> Result<bool, ApiError> {

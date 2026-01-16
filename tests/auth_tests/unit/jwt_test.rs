@@ -26,6 +26,11 @@ fn test_config() -> Arc<AppConfig> {
         encryption_key: SecretString::from("test_encryption_key_32_chars_ok"),
         host: "127.0.0.1".to_string(),
         port: 3000,
+        smtp_host: "smtp.gmail.com".to_string(),
+        smtp_port: 587,
+        smtp_username: "test@example.com".to_string(),
+        smtp_password: SecretString::from("test_password"),
+        email_from: "test@example.com".to_string(),
     })
 }
 
@@ -208,6 +213,11 @@ async fn jwt_validation_rejects_expired_token() {
         encryption_key: SecretString::from("test_encryption_key_32_chars_ok"),
         host: "127.0.0.1".to_string(),
         port: 3000,
+        smtp_host: "smtp.gmail.com".to_string(),
+        smtp_port: 587,
+        smtp_username: "test@example.com".to_string(),
+        smtp_password: SecretString::from("test_password"),
+        email_from: "test@example.com".to_string(),
     });
 
     let user = test_user();
@@ -252,6 +262,11 @@ async fn jwt_signature_fails_with_wrong_secret() {
         encryption_key: SecretString::from("test_encryption_key_32_chars_ok"),
         host: "127.0.0.1".to_string(),
         port: 3000,
+        smtp_host: "smtp.gmail.com".to_string(),
+        smtp_port: 587,
+        smtp_username: "test@example.com".to_string(),
+        smtp_password: SecretString::from("test_password"),
+        email_from: "test@example.com".to_string(),
     });
 
     let result = validate_access_token(&token, &wrong_config);

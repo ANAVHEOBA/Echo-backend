@@ -7,36 +7,9 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use echo_backend::{create_app, config::AppConfig};
-use secrecy::SecretString;
-use sqlx::postgres::PgPoolOptions;
-use tower::ServiceExt;
+use crate::common::create_test_app;
 use uuid::Uuid;
-
-// =============================================================================
-// TEST HELPERS
-// =============================================================================
-
-async fn create_test_app() -> axum::Router {
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_lazy("postgres://test:test@localhost/test_db")
-        .expect("Failed to create lazy pool");
-
-    let config = AppConfig {
-        database_url: SecretString::from("postgres://test:test@localhost/test_db"),
-        redis_url: "redis://localhost:6379".to_string(),
-        jwt_secret: SecretString::from("test_jwt_secret_key_that_is_at_least_32_characters_long"),
-        jwt_refresh_secret: SecretString::from("test_refresh_secret_key_that_is_at_least_32_chars"),
-        access_token_expiry_secs: 900,
-        refresh_token_expiry_days: 7,
-        encryption_key: SecretString::from("test_encryption_key_32_chars_ok"),
-        host: "127.0.0.1".to_string(),
-        port: 3000,
-    };
-
-    create_app(pool, config).await
-}
+use tower::ServiceExt;
 
 const OAUTH_PROVIDERS: [&str; 5] = ["google", "zoom", "slack", "hubspot", "salesforce"];
 
