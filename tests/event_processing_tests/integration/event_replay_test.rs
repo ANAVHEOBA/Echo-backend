@@ -162,7 +162,7 @@ async fn replay_event_prevents_concurrent_replays() {
 }
 
 #[tokio::test]
-async fn replay_only_failed_or_  completed_events() {
+async fn replay_only_failed_or_completed_events() {
     let app = create_test_app().await;
     let event_id = sample_event_id();
 

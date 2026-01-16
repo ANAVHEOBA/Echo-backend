@@ -37,10 +37,18 @@ pub async fn create_test_config() -> AppConfig {
 pub async fn setup_test_context() -> (Router, Arc<AppConfig>, PgPool) {
     let config = create_test_config().await;
     
+    // Connect to database and run migrations
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect_lazy(config.database_url.expose_secret())
-        .expect("Failed to create lazy pool");
+        .connect(config.database_url.expose_secret())
+        .await
+        .expect("Failed to connect to test database");
+    
+    // Run migrations
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
 
     let redis = echo_backend::config::create_redis_pool(&config).await
         .expect("Failed to create redis pool");
