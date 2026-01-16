@@ -16,8 +16,8 @@ pub fn event_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/webhooks/generic", post(controllers::generic_webhook))
         
         // Event management endpoints
-        .route("/events", get(controllers::list_events))
-        .route("/events/stats", get(controllers::get_event_stats))
+        .route("/", get(controllers::list_events))
+        .route("/stats", get(controllers::get_event_stats))
         
         .with_state(state)
 }
