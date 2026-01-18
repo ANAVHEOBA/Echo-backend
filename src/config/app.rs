@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub email_from: String,
     pub google_client_id: String,
     pub google_client_secret: SecretString,
+    pub zoom_client_id: String,
+    pub zoom_client_secret: SecretString,
     pub zoom_webhook_secret: SecretString,
 }
 
@@ -77,6 +79,12 @@ impl AppConfig {
                 env::var("GOOGLE_CLIENT_SECRET")
                     .map_err(|_| ConfigError::Missing("GOOGLE_CLIENT_SECRET"))?,
             ),
+            zoom_client_id: env::var("ZOOM_CLIENT_ID")
+                .map_err(|_| ConfigError::Missing("ZOOM_CLIENT_ID"))?,
+            zoom_client_secret: SecretString::from(
+                env::var("ZOOM_CLIENT_SECRET")
+                    .map_err(|_| ConfigError::Missing("ZOOM_CLIENT_SECRET"))?,
+            ),
             zoom_webhook_secret: SecretString::from(
                 env::var("ZOOM_WEBHOOK_SECRET")
                     .map_err(|_| ConfigError::Missing("ZOOM_WEBHOOK_SECRET"))?,
@@ -106,6 +114,10 @@ impl AppConfig {
 
     pub fn google_client_secret(&self) -> &str {
         self.google_client_secret.expose_secret()
+    }
+
+    pub fn zoom_client_secret(&self) -> &str {
+        self.zoom_client_secret.expose_secret()
     }
 
     pub fn zoom_webhook_secret(&self) -> &str {
