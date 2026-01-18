@@ -264,20 +264,35 @@ async fn gmail_webhook_rejects_malformed_payload() {
 async fn zoom_webhook_accepts_meeting_ended_event() {
     let app = create_test_app().await;
     let payload = create_zoom_webhook_payload();
+    let timestamp = "1234567890";
+    
+    // Calculate valid signature using default test secret "test_zoom_secret"
+    // Format: v0 = HMAC-SHA256(v0:timestamp:body, secret)
+    let body_str = payload.to_string();
+    let message = format!("v0:{}:{}", timestamp, body_str);
+    
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    use hex;
+    
+    let mut mac = Hmac::<Sha256>::new_from_slice(b"test_zoom_secret").unwrap();
+    mac.update(message.as_bytes());
+    let signature = format!("v0={}", hex::encode(mac.finalize().into_bytes()));
 
     let request = Request::builder()
         .uri("/api/events/webhooks/zoom")
         .method("POST")
         .header("Content-Type", "application/json")
-        .header("Authorization", &valid_zoom_signature())
-        .body(Body::from(payload.to_string()))
+        .header("x-zm-request-timestamp", timestamp)
+        .header("x-zm-signature", signature)
+        .body(Body::from(body_str))
         .unwrap();
 
     let response = app.oneshot(request).await.unwrap();
 
     assert!(
-        response.status() == StatusCode::OK || response.status() == StatusCode::NOT_FOUND,
-        "Zoom webhook should accept meeting.ended event, got: {}", response.status()
+        response.status() == StatusCode::OK,
+        "Zoom webhook should accept meeting.ended event with valid signature, got: {}", response.status()
     );
 }
 
@@ -290,15 +305,16 @@ async fn zoom_webhook_rejects_invalid_authorization() {
         .uri("/api/events/webhooks/zoom")
         .method("POST")
         .header("Content-Type", "application/json")
-        .header("Authorization", "invalid_auth_token")
+        .header("x-zm-signature", "v0=invalid_signature")
+        .header("x-zm-request-timestamp", "1234567890")
         .body(Body::from(payload.to_string()))
         .unwrap();
 
     let response = app.oneshot(request).await.unwrap();
 
     assert!(
-        response.status() == StatusCode::UNAUTHORIZED || response.status() == StatusCode::NOT_FOUND,
-        "Zoom webhook should reject invalid authorization"
+        response.status() == StatusCode::UNAUTHORIZED,
+        "Zoom webhook should reject invalid signature"
     );
 }
 
