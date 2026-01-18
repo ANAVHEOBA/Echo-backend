@@ -5,6 +5,7 @@ use axum::{
 use std::sync::Arc;
 use serde::Deserialize;
 use reqwest::Client;
+use std::collections::HashMap;
 
 use crate::AppState;
 use crate::errors::ApiError;
@@ -45,15 +46,14 @@ pub async fn zoom_callback(
          "https://echo-backend-t2q5.onrender.com/api/integrations/zoom/callback".to_string()
     };
 
-    let params = [
-        ("grant_type", "authorization_code"),
-        ("code", &params.code),
-        ("redirect_uri", &redirect_uri),
-    ];
+    let mut form_params = HashMap::new();
+    form_params.insert("grant_type", "authorization_code");
+    form_params.insert("code", &params.code);
+    form_params.insert("redirect_uri", &redirect_uri);
 
     let response = client.post(token_url)
         .basic_auth(&state.config.zoom_client_id, Some(state.config.zoom_client_secret()))
-        .form(&params)
+        .form(&form_params)
         .send()
         .await
         .map_err(|e| ApiError::InternalError(format!("Zoom API request failed: {}", e)))?;
