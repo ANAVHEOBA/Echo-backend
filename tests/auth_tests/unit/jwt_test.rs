@@ -16,6 +16,8 @@ use uuid::Uuid;
 // =============================================================================
 
 fn test_config() -> Arc<AppConfig> {
+    dotenvy::dotenv().ok();
+    
     Arc::new(AppConfig {
         database_url: SecretString::from("postgres://test:test@localhost/test"),
         redis_url: "redis://localhost:6379".to_string(),
@@ -31,6 +33,8 @@ fn test_config() -> Arc<AppConfig> {
         smtp_username: "test@example.com".to_string(),
         smtp_password: SecretString::from("test_password"),
         email_from: "test@example.com".to_string(),
+        google_client_id: std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default(),
+        google_client_secret: SecretString::from(std::env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default()),
     })
 }
 
@@ -203,6 +207,8 @@ async fn jwt_iat_is_current_timestamp() {
 #[tokio::test]
 async fn jwt_validation_rejects_expired_token() {
     // Create config with very short expiry and wait for expiration
+    dotenvy::dotenv().ok();
+    
     let config = Arc::new(AppConfig {
         database_url: SecretString::from("postgres://test:test@localhost/test"),
         redis_url: "redis://localhost:6379".to_string(),
@@ -218,6 +224,8 @@ async fn jwt_validation_rejects_expired_token() {
         smtp_username: "test@example.com".to_string(),
         smtp_password: SecretString::from("test_password"),
         email_from: "test@example.com".to_string(),
+        google_client_id: std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default(),
+        google_client_secret: SecretString::from(std::env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default()),
     });
 
     let user = test_user();
@@ -230,21 +238,6 @@ async fn jwt_validation_rejects_expired_token() {
     assert!(result.is_err(), "Expired token should be rejected");
 }
 
-// =============================================================================
-// SIGNATURE VALIDATION TESTS
-// =============================================================================
-
-#[tokio::test]
-async fn jwt_signature_is_valid_with_correct_secret() {
-    let config = test_config();
-    let user = test_user();
-
-    let token = create_access_token(&user, &config).unwrap();
-    let result = validate_access_token(&token, &config);
-
-    assert!(result.is_ok(), "Valid token should be accepted");
-}
-
 #[tokio::test]
 async fn jwt_signature_fails_with_wrong_secret() {
     let config = test_config();
@@ -252,6 +245,8 @@ async fn jwt_signature_fails_with_wrong_secret() {
     let token = create_access_token(&user, &config).unwrap();
 
     // Create config with different secret
+    dotenvy::dotenv().ok();
+    
     let wrong_config = Arc::new(AppConfig {
         database_url: SecretString::from("postgres://test:test@localhost/test"),
         redis_url: "redis://localhost:6379".to_string(),
@@ -267,10 +262,27 @@ async fn jwt_signature_fails_with_wrong_secret() {
         smtp_username: "test@example.com".to_string(),
         smtp_password: SecretString::from("test_password"),
         email_from: "test@example.com".to_string(),
+        google_client_id: std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default(),
+        google_client_secret: SecretString::from(std::env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default()),
     });
 
     let result = validate_access_token(&token, &wrong_config);
     assert!(result.is_err(), "Token with wrong secret should be rejected");
+}
+
+// =============================================================================
+// SIGNATURE VALIDATION TESTS
+// =============================================================================
+
+#[tokio::test]
+async fn jwt_signature_is_valid_with_correct_secret() {
+    let config = test_config();
+    let user = test_user();
+
+    let token = create_access_token(&user, &config).unwrap();
+    let result = validate_access_token(&token, &config);
+
+    assert!(result.is_ok(), "Valid token should be accepted");
 }
 
 #[tokio::test]

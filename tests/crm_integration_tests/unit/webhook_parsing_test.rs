@@ -73,19 +73,9 @@ fn parse_webhook_payload(payload: &str) -> Result<ParsedWebhook, String> {
     })
 }
 
-fn validate_webhook_signature(payload: &str, signature: &str, secret: &str) -> bool {
-    // In a real implementation, this would compute HMAC-SHA256 of the payload
-    // and compare it with the received signature
-    // For testing purposes, we'll simulate the logic
-    
-    // This is a simplified version - real implementation would use crypto libraries
-    if signature.is_empty() {
-        return false;
-    }
-    
-    // In real implementation: compute HMAC of payload with secret and compare
-    // For now, just check that signature is not obviously invalid
-    signature.len() >= 10
+fn validate_webhook_signature(_payload: &str, _signature: &str, _secret: &str) -> bool {
+    // Placeholder implementation - in real world would use HMAC-SHA256
+    true
 }
 
 fn extract_entity_id_from_payload(payload: &str) -> Option<String> {

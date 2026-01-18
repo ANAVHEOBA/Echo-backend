@@ -43,9 +43,7 @@ fn create_gmail_pub_sub_payload() -> serde_json::Value {
         "message": {
             "data": "eyJlbWFpbEFkZHJlc3MiOiJ0ZXN0QGV4YW1wbGUuY29tIiwiaGlzdG9yeUlkIjoiMTIzNDU2In0=",
             "messageId": &format!("{}", Uuid::new_v4()),
-            "message_id": &format!("{}", Uuid::new_v4()),
-            "publishTime": "2024-01-01T12:00:00.000Z",
-            "publish_time": "2024-01-01T12:00:00.000Z"
+            "publishTime": "2024-01-01T12:00:00.000Z"
         },
         "subscription": "projects/test-project/subscriptions/gmail-push"
     })

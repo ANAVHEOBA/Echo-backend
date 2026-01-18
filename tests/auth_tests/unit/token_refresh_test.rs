@@ -25,6 +25,8 @@ use uuid::Uuid;
 // =============================================================================
 
 fn test_config() -> Arc<AppConfig> {
+    dotenvy::dotenv().ok();
+    
     Arc::new(AppConfig {
         database_url: SecretString::from("postgres://test:test@localhost/test"),
         redis_url: "redis://localhost:6379".to_string(),
@@ -40,6 +42,8 @@ fn test_config() -> Arc<AppConfig> {
         smtp_username: "test@example.com".to_string(),
         smtp_password: SecretString::from("test_password"),
         email_from: "test@example.com".to_string(),
+        google_client_id: std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default(),
+        google_client_secret: SecretString::from(std::env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default()),
     })
 }
 
@@ -75,6 +79,8 @@ fn test_user_admin() -> User {
 }
 
 fn expired_token_config() -> Arc<AppConfig> {
+    dotenvy::dotenv().ok();
+    
     Arc::new(AppConfig {
         database_url: SecretString::from("postgres://test:test@localhost/test"),
         redis_url: "redis://localhost:6379".to_string(),
@@ -90,6 +96,8 @@ fn expired_token_config() -> Arc<AppConfig> {
         smtp_username: "test@example.com".to_string(),
         smtp_password: SecretString::from("test_password"),
         email_from: "test@example.com".to_string(),
+        google_client_id: std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default(),
+        google_client_secret: SecretString::from(std::env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default()),
     })
 }
 
@@ -670,6 +678,8 @@ async fn wrong_secret_token_is_rejected() {
         smtp_username: "test@example.com".to_string(),
         smtp_password: SecretString::from("test_password"),
         email_from: "test@example.com".to_string(),
+        google_client_id: std::env::var("GOOGLE_CLIENT_ID").unwrap_or_default(),
+        google_client_secret: SecretString::from(std::env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default()),
     });
 
     // Act

@@ -23,16 +23,7 @@ fn sample_event_id() -> String {
     format!("evt_{}", Uuid::new_v4())
 }
 
-fn failed_event_payload() -> serde_json::Value {
-    json!({
-        "event_id": &sample_event_id(),
-        "event_type": "email_received",
-        "source": "gmail",
-        "error_message": "LLM API timeout",
-        "failure_count": 3,
-        "last_attempt_at": "2024-01-01T12:00:00Z"
-    })
-}
+
 
 // =============================================================================
 // FAILED EVENT DETECTION TESTS

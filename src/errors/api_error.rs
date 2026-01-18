@@ -45,6 +45,9 @@ pub enum ApiError {
     #[error("API key not found")]
     ApiKeyNotFound,
 
+    #[error("Bad request: {0}")]
+    BadRequest(String),
+
     #[error("Database error")]
     DatabaseError(#[from] sqlx::Error),
 
@@ -67,6 +70,7 @@ impl IntoResponse for ApiError {
             ApiError::InvalidPassword(_) => (StatusCode::BAD_REQUEST, "INVALID_PASSWORD"),
             ApiError::ApiKeyLimitReached => (StatusCode::FORBIDDEN, "API_KEY_LIMIT"),
             ApiError::ApiKeyNotFound => (StatusCode::NOT_FOUND, "API_KEY_NOT_FOUND"),
+            ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, "BAD_REQUEST"),
             ApiError::DatabaseError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR"),
             ApiError::InternalError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
         };

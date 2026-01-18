@@ -86,8 +86,12 @@ impl<'a> UserCrud<'a> {
 
         self.reset_failed_login(user.id).await?;
 
-        let access_token = create_access_token(&user, &self.config)?;
-        let refresh_token = create_refresh_token(&user, &self.config)?;
+        self.generate_tokens_for_user(&user).await
+    }
+
+    pub async fn generate_tokens_for_user(&self, user: &User) -> Result<LoginResult, ApiError> {
+        let access_token = create_access_token(user, &self.config)?;
+        let refresh_token = create_refresh_token(user, &self.config)?;
 
         self.store_refresh_token(user.id, &refresh_token).await?;
 
@@ -119,12 +123,7 @@ impl<'a> UserCrud<'a> {
 
         let user = self.find_by_id(&claims.sub).await?.ok_or(ApiError::UserNotFound)?;
 
-        let access_token = create_access_token(&user, &self.config)?;
-        let new_refresh = create_refresh_token(&user, &self.config)?;
-
-        self.store_refresh_token(user.id, &new_refresh).await?;
-
-        Ok(LoginResult { access_token, refresh_token: new_refresh })
+        self.generate_tokens_for_user(&user).await
     }
 
     pub async fn logout(&self, token: &str) -> Result<(), ApiError> {
@@ -177,6 +176,43 @@ impl<'a> UserCrud<'a> {
             .execute(self.pool)
             .await
             .map_err(ApiError::from)?;
+        Ok(())
+    }
+
+    pub async fn save_oauth_connection(
+        &self, 
+        user_id: Uuid, 
+        provider: &str, 
+        access_token: &str, 
+        refresh_token: Option<&str>,
+        expires_in_secs: Option<u64>
+    ) -> Result<(), ApiError> {
+        let expires_at = expires_in_secs.map(|s| Utc::now() + Duration::seconds(s as i64));
+        
+        // Enum cast for provider: 'google', 'zoom', etc.
+        // We need to cast the string to the oauth_provider enum type in SQL.
+        
+        // Note: We use ON CONFLICT DO UPDATE to handle re-connections
+        let sql = r#"
+            INSERT INTO oauth_connections (user_id, provider, access_token, refresh_token, expires_at, created_at, updated_at)
+            VALUES ($1, $2::oauth_provider, $3, $4, $5, NOW(), NOW())
+            ON CONFLICT (user_id, provider) DO UPDATE
+            SET access_token = EXCLUDED.access_token,
+                refresh_token = COALESCE(EXCLUDED.refresh_token, oauth_connections.refresh_token), -- Keep old refresh token if new one is null (common in OAuth rotation)
+                expires_at = EXCLUDED.expires_at,
+                updated_at = NOW()
+        "#;
+        
+        sqlx::query(sql)
+            .bind(user_id)
+            .bind(provider)
+            .bind(access_token)
+            .bind(refresh_token)
+            .bind(expires_at)
+            .execute(self.pool)
+            .await
+            .map_err(ApiError::from)?;
+            
         Ok(())
     }
 }

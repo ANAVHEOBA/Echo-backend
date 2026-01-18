@@ -17,6 +17,9 @@ pub struct AppConfig {
     pub smtp_username: String,
     pub smtp_password: SecretString,
     pub email_from: String,
+    pub google_client_id: String,
+    pub google_client_secret: SecretString,
+    pub zoom_webhook_secret: SecretString,
 }
 
 impl AppConfig {
@@ -59,7 +62,7 @@ impl AppConfig {
             smtp_port: env::var("SMTP_PORT")
                 .unwrap_or_else(|_| "587".to_string())
                 .parse()
-                .map_err(|_| ConfigError::Invalid("SMTP_PORT"))?,
+                .map_err(|_| ConfigError::Invalid("PORT"))?,
             smtp_username: env::var("SMTP_USERNAME")
                 .map_err(|_| ConfigError::Missing("SMTP_USERNAME"))?,
             smtp_password: SecretString::from(
@@ -68,6 +71,16 @@ impl AppConfig {
             ),
             email_from: env::var("EMAIL_FROM")
                 .map_err(|_| ConfigError::Missing("EMAIL_FROM"))?,
+            google_client_id: env::var("GOOGLE_CLIENT_ID")
+                .map_err(|_| ConfigError::Missing("GOOGLE_CLIENT_ID"))?,
+            google_client_secret: SecretString::from(
+                env::var("GOOGLE_CLIENT_SECRET")
+                    .map_err(|_| ConfigError::Missing("GOOGLE_CLIENT_SECRET"))?,
+            ),
+            zoom_webhook_secret: SecretString::from(
+                env::var("ZOOM_WEBHOOK_SECRET")
+                    .map_err(|_| ConfigError::Missing("ZOOM_WEBHOOK_SECRET"))?,
+            ),
         })
     }
 
@@ -89,6 +102,14 @@ impl AppConfig {
 
     pub fn smtp_password(&self) -> &str {
         self.smtp_password.expose_secret()
+    }
+
+    pub fn google_client_secret(&self) -> &str {
+        self.google_client_secret.expose_secret()
+    }
+
+    pub fn zoom_webhook_secret(&self) -> &str {
+        self.zoom_webhook_secret.expose_secret()
     }
 }
 

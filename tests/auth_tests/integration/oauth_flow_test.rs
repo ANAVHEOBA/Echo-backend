@@ -18,7 +18,7 @@ const OAUTH_PROVIDERS: [&str; 5] = ["google", "zoom", "slack", "hubspot", "sales
 // =============================================================================
 
 #[tokio::test]
-async fn oauth_authorize_requires_auth() {
+async fn oauth_authorize_is_public_for_login() {
     let app = create_test_app().await;
 
     for provider in OAUTH_PROVIDERS {
@@ -30,13 +30,26 @@ async fn oauth_authorize_requires_auth() {
 
         let response = app.clone().oneshot(request).await.unwrap();
 
-        // Should require authentication (or 404 if not implemented)
-        assert!(
-            response.status() == StatusCode::UNAUTHORIZED
-                || response.status() == StatusCode::NOT_FOUND,
-            "OAuth authorize for {} should require auth",
-            provider
-        );
+        if provider == "google" {
+            // Google should redirect (303 See Other) to the consent screen
+            assert_eq!(
+                response.status(),
+                StatusCode::SEE_OTHER,
+                "Google authorize should redirect"
+            );
+            assert!(
+                response.headers().contains_key("location"),
+                "Google authorize should have location header"
+            );
+        } else {
+            // Others are not implemented yet, so they should return 400 Bad Request
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "Unsupported provider {} should return Bad Request",
+                provider
+            );
+        }
     }
 }
 
@@ -53,7 +66,7 @@ async fn oauth_authorize_invalid_provider() {
 
     let response = app.oneshot(request).await.unwrap();
 
-    // Should return 400 or 404 for invalid provider
+    // Should return 400 or 404 for invalid provider (we expect 400 from our handler check)
     assert!(
         response.status().is_client_error(),
         "Invalid provider should be rejected"
@@ -63,6 +76,8 @@ async fn oauth_authorize_invalid_provider() {
 // =============================================================================
 // OAUTH CALLBACK ENDPOINT TESTS
 // =============================================================================
+// ... (rest of file) ...
+
 
 #[tokio::test]
 async fn oauth_callback_requires_state() {
@@ -312,7 +327,8 @@ async fn concurrent_oauth_authorize_requests() {
                     .body(Body::empty())
                     .unwrap();
 
-                app.oneshot(request).await.unwrap().status()
+                let response = app.oneshot(request).await.unwrap();
+                (provider, response.status())
             })
         })
         .collect();
@@ -323,12 +339,13 @@ async fn concurrent_oauth_authorize_requests() {
         .map(|r| r.unwrap())
         .collect();
 
-    // All should complete without panic
-    for status in &results {
-        assert!(
-            *status == StatusCode::UNAUTHORIZED || *status == StatusCode::NOT_FOUND,
-            "Concurrent OAuth authorize should be handled"
-        );
+    // All should complete without panic and return correct status
+    for (provider, status) in results {
+        if provider == "google" {
+            assert_eq!(status, StatusCode::SEE_OTHER, "Google should redirect");
+        } else {
+            assert_eq!(status, StatusCode::BAD_REQUEST, "Others should fail");
+        }
     }
 }
 
@@ -360,11 +377,12 @@ async fn concurrent_oauth_callback_requests() {
         .map(|r| r.unwrap())
         .collect();
 
-    // All should complete without panic
+    // All should complete. Expect Client Error because state is invalid/missing in Redis
+    // or external call fails.
     for status in &results {
         assert!(
-            status.is_client_error() || *status == StatusCode::NOT_FOUND,
-            "Concurrent OAuth callbacks should be handled"
+            status.is_client_error(),
+            "Concurrent OAuth callbacks should result in client error (invalid state/code)"
         );
     }
 }

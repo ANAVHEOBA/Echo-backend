@@ -11,7 +11,10 @@ pub fn auth_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/register", post(controller::register))
         .route("/login", post(controller::login))
         .route("/refresh", post(controller::refresh))
-        .route("/logout", post(controller::logout));
+        .route("/logout", post(controller::logout))
+        // OAuth Routes
+        .route("/oauth/{provider}/authorize", get(controller::oauth_authorize))
+        .route("/oauth/{provider}/callback", get(controller::oauth_callback));
 
     // Protected routes - require valid JWT
     let protected_routes = Router::new()

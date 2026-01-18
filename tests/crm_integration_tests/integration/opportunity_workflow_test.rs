@@ -9,7 +9,6 @@ use axum::{
 };
 use echo_backend::modules::auth::{crud::UserCrud, services::create_access_token};
 use crate::common::{setup_test_context, create_test_app};
-use secrecy::ExposeSecret;
 use serde_json::json;
 use sqlx::postgres::PgPool;
 use tower::ServiceExt;
@@ -48,7 +47,7 @@ fn valid_opportunity_data() -> serde_json::Value {
 
 #[tokio::test]
 async fn full_opportunity_workflow_flow() {
-    let (app, config, pool) = setup_test_context().await;
+    let (app, config, pool, _redis) = setup_test_context().await;
     let auth_header = create_auth_header(&config, &pool).await;
     let opportunity_data = valid_opportunity_data();
 
