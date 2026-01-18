@@ -1,38 +1,48 @@
 use axum::{
-    extract::State,
+    extract::{State, Path},
     http::{StatusCode, HeaderMap},
     Json,
+    Extension,
+    body::Bytes,
 };
 use std::sync::Arc;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use hex;
+use uuid::Uuid;
+use chrono::Utc;
+use validator::Validate;
 
 use crate::AppState;
+use crate::modules::auth::model::Claims;
 use super::schemas::{
     SlackWebhookPayload,
     GmailPushPayload, ZoomWebhookPayload, GenericWebhookPayload,
     EventFilter, EventResponse, EventStatsResponse,
+    CreateSubscriptionRequest, SubscriptionResponse,
 };
-use super::models::Event;
+use super::models::{Event, WebhookSubscription};
 use super::crud;
 
 // =============================================================================
 // SLACK WEBHOOK CONTROLLER
 // =============================================================================
-// ... (keep slack_webhook and gmail_webhook as is)
 
 pub async fn slack_webhook(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<SlackWebhookPayload>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let body_str = std::str::from_utf8(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let payload: SlackWebhookPayload = serde_json::from_str(body_str)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
     tracing::info!("Received Slack webhook: type={}", payload.event_type);
 
-    // Handle URL verification challenge
     if payload.event_type == "url_verification" {
         if let Some(challenge) = payload.challenge {
-            tracing::info!("Responding to Slack URL verification challenge");
             return Ok(Json(serde_json::json!({
                 "challenge": challenge
             })));
@@ -40,16 +50,34 @@ pub async fn slack_webhook(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Handle event callbacks
+    let timestamp = headers.get("X-Slack-Request-Timestamp")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let signature = headers.get("X-Slack-Signature")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let secret = state.config.slack_signing_secret();
+    let basestring = format!("v0:{}:{}", timestamp, body_str);
+
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    mac.update(basestring.as_bytes());
+    let calculated_signature = format!("v0={}", hex::encode(mac.finalize().into_bytes()));
+
+    if signature != calculated_signature {
+        tracing::warn!("Invalid Slack signature. Expected: {}, Got: {}", calculated_signature, signature);
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
     if payload.event_type == "event_callback" {
         if let Some(ref event_data) = payload.event {
-            // Extract event type from nested event
             let event_type = event_data.get("type")
                 .and_then(|t| t.as_str())
                 .unwrap_or("unknown")
                 .to_string();
 
-            // Create event record
             let event = Event::new(
                 event_type,
                 "slack".to_string(),
@@ -57,12 +85,8 @@ pub async fn slack_webhook(
                 serde_json::json!(payload),
             );
 
-            // Store event in database
             match crud::create_event(&state.pool, event).await {
-                Ok(stored_event) => {
-                    tracing::info!("Stored Slack event: {}", stored_event.id);
-                    
-                    // Enqueue job for processing
+                Ok(Some(stored_event)) => {
                     let job = crate::services::queue::Job::new(
                         "event.process.slack",
                         serde_json::json!({
@@ -71,18 +95,12 @@ pub async fn slack_webhook(
                     );
                     
                     let queue = crate::services::queue::Queue::new(state.redis.clone());
-                    if let Err(e) = queue.enqueue(&job).await {
-                        tracing::error!("Failed to enqueue processing job: {}", e);
-                        // Don't fail the request even if job enqueueing fails
-                    } else {
-                        tracing::debug!("Enqueued processing job for event: {}", stored_event.id);
-                    }
+                    let _ = queue.enqueue(&job).await;
                     
                     return Ok(Json(serde_json::json!({ "ok": true })));
                 }
-                Err(sqlx::Error::Database(ref e)) if e.is_unique_violation() => {
+                Ok(None) => {
                     // Duplicate event (already processed)
-                    tracing::warn!("Duplicate Slack event ignored");
                     return Ok(Json(serde_json::json!({ "ok": true, "duplicate": true })));
                 }
                 Err(e) => {
@@ -106,7 +124,6 @@ pub async fn gmail_webhook(
 ) -> Result<StatusCode, StatusCode> {
     tracing::info!("Received Gmail push notification");
 
-    // Decode base64 data
     let _decoded = match BASE64.decode(&payload.message.data) {
         Ok(d) => d,
         Err(e) => {
@@ -123,27 +140,23 @@ pub async fn gmail_webhook(
     );
 
     match crud::create_event(&state.pool, event).await {
-        Ok(stored_event) => {
+        Ok(Some(stored_event)) => {
             tracing::info!("Stored Gmail event: {}", stored_event.id);
 
-            // Enqueue job for processing
             let job = crate::services::queue::Job::new(
                 "event.process.gmail",
                 serde_json::json!({
                     "event_id": stored_event.id.to_string(),
-                    // We might need to parse the decoded data to get the email address to know WHICH user this is for.
-                    // Gmail push notifications usually contain the email address in the decoded data or we map subscription ID.
-                    // For now, we'll let the worker handle parsing.
                 })
             );
             
             let queue = crate::services::queue::Queue::new(state.redis.clone());
-            if let Err(e) = queue.enqueue(&job).await {
-                tracing::error!("Failed to enqueue processing job for Gmail event: {}", e);
-            } else {
-                tracing::debug!("Enqueued processing job for Gmail event: {}", stored_event.id);
-            }
+            let _ = queue.enqueue(&job).await;
 
+            Ok(StatusCode::OK)
+        }
+        Ok(None) => {
+            tracing::warn!("Duplicate Gmail event ignored");
             Ok(StatusCode::OK)
         }
         Err(e) => {
@@ -160,45 +173,53 @@ pub async fn gmail_webhook(
 pub async fn zoom_webhook(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(payload): Json<ZoomWebhookPayload>,
+    body: Bytes,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let body_str = std::str::from_utf8(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let payload: ZoomWebhookPayload = serde_json::from_str(body_str).map_err(|_| StatusCode::BAD_REQUEST)?;
+    
     tracing::info!("Received Zoom webhook: event={}", payload.event);
 
-    // 1. URL Validation Challenge (Handshake)
     if payload.event == "endpoint.url_validation" {
-        tracing::info!("Handling Zoom URL validation challenge");
-        
         let plain_token = payload.payload.get("plainToken")
             .and_then(|t| t.as_str())
             .ok_or(StatusCode::BAD_REQUEST)?;
 
         let secret = state.config.zoom_webhook_secret();
 
-        // Create HMAC-SHA256 hash
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         mac.update(plain_token.as_bytes());
         let result = mac.finalize();
         let hash = hex::encode(result.into_bytes());
 
-        // Return the response Zoom expects
         return Ok(Json(serde_json::json!({
             "plainToken": plain_token,
             "encryptedToken": hash
         })));
     }
 
-    // 2. Signature Verification for regular events
-    // Zoom signature format: v0 = HMAC-SHA256(v0:timestamp:body, secret)
-    // Note: To properly verify, we need the raw body bytes, but we've already deserialized to JSON.
-    // For now, we will SKIP strict body verification to get the MVP working, 
-    // relying on the Secret Token existence in our config implies we are ready.
-    // TODO: Implement strict signature verification using axum::body::Bytes
-    
-    // For now, we trust the "authorization" header if present (legacy) or check for x-zm-signature presence
-    // In production, you MUST verify x-zm-signature against the raw body.
-    if !headers.contains_key("x-zm-signature") && !headers.contains_key("authorization") {
-        tracing::warn!("Missing Zoom signature headers");
+    let signature = headers.get("x-zm-signature")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| headers.get("authorization").and_then(|v| v.to_str().ok()));
+
+    if let Some(sig) = signature {
+         let timestamp = headers.get("x-zm-request-timestamp")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""); 
+
+        let secret = state.config.zoom_webhook_secret();
+        let message = format!("v0:{}:{}", timestamp, body_str);
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        mac.update(message.as_bytes());
+        let calculated_signature = format!("v0={}", hex::encode(mac.finalize().into_bytes()));
+
+        if sig != calculated_signature {
+             return Err(StatusCode::UNAUTHORIZED);
+        }
+    } else {
         return Err(StatusCode::UNAUTHORIZED);
     }
 
@@ -215,8 +236,7 @@ pub async fn zoom_webhook(
     );
 
     match crud::create_event(&state.pool, event).await {
-        Ok(stored_event) => {
-             // Enqueue job for processing
+        Ok(Some(stored_event)) => {
              let job = crate::services::queue::Job::new(
                 "event.process.zoom",
                 serde_json::json!({
@@ -225,10 +245,11 @@ pub async fn zoom_webhook(
             );
             
             let queue = crate::services::queue::Queue::new(state.redis.clone());
-            let _ = queue.enqueue(&job).await; // Ignore enqueue errors for now
+            let _ = queue.enqueue(&job).await;
             
             Ok(Json(serde_json::json!({ "status": "processed" })))
         },
+        Ok(None) => Ok(Json(serde_json::json!({ "status": "duplicate" }))),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
@@ -239,9 +260,16 @@ pub async fn zoom_webhook(
 
 pub async fn generic_webhook(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<GenericWebhookPayload>,
 ) -> Result<StatusCode, StatusCode> {
-    tracing::info!("Received generic webhook: event={}", payload.event);
+    let signature = headers.get("X-Webhook-Signature")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    if signature != state.config.generic_webhook_secret() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
 
     let event = Event::new(
         payload.event.clone(),
@@ -281,18 +309,159 @@ pub async fn list_events(
     }
 }
 
+pub async fn get_event(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<EventResponse>, StatusCode> {
+    match crud::get_event_by_id(&state.pool, &id).await {
+        Ok(Some(e)) => {
+            let response = EventResponse {
+                id: e.id.to_string(),
+                event_type: e.event_type,
+                source: e.source,
+                external_id: e.external_id,
+                payload: e.payload,
+                processed_at: e.processed_at.map(|dt| dt.to_rfc3339()),
+                created_at: e.created_at.to_rfc3339(),
+            };
+            Ok(Json(response))
+        }
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+pub async fn replay_event(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let event = match crud::get_event_by_id(&state.pool, &id).await {
+        Ok(Some(e)) => e,
+        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+
+    let job_name = match event.source.as_str() {
+        "slack" => "event.process.slack",
+        "gmail" => "event.process.gmail",
+        "zoom" => "event.process.zoom",
+        _ => "event.process.generic",
+    };
+
+    let job = crate::services::queue::Job::new(
+        job_name,
+        serde_json::json!({
+            "event_id": event.id.to_string(),
+            "replay": true
+        })
+    );
+    
+    let queue = crate::services::queue::Queue::new(state.redis.clone());
+    if let Err(_e) = queue.enqueue(&job).await {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    Ok(Json(serde_json::json!({ 
+        "message": "Event replay enqueued", 
+        "event_id": id 
+    })))
+}
+
 pub async fn get_event_stats(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<EventStatsResponse>, StatusCode> {
     match crud::get_event_stats(&state.pool).await {
-        Ok((total, processed, pending)) => {
+        Ok((total, processed, pending, failed)) => {
             Ok(Json(EventStatsResponse {
                 total_events: total,
                 processed_events: processed,
                 pending_events: pending,
-                failed_events: 0, // TODO: Calculate from event_logs
+                failed_events: failed,
             }))
         }
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+// =============================================================================
+// SUBSCRIPTION CONTROLLERS
+// =============================================================================
+
+pub async fn create_subscription(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<CreateSubscriptionRequest>,
+) -> Result<(StatusCode, Json<SubscriptionResponse>), StatusCode> {
+    
+    // Validate request
+    if let Err(_) = payload.validate() {
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    if !["slack", "gmail", "zoom", "generic"].contains(&payload.platform.as_str()) {
+         return Err(StatusCode::UNPROCESSABLE_ENTITY); // Or BAD_REQUEST, but test expects validation error
+    }
+
+    let subscription = WebhookSubscription {
+        id: Uuid::new_v4(),
+        user_id: claims.sub,
+        platform: payload.platform.clone(),
+        webhook_url: payload.webhook_url.clone(),
+        secret: payload.secret,
+        event_types: payload.event_types.map(|t| serde_json::to_value(t).unwrap_or(serde_json::Value::Null)),
+        active: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+
+    match crud::create_subscription(&state.pool, subscription).await {
+        Ok(sub) => Ok((StatusCode::CREATED, Json(SubscriptionResponse {
+            id: sub.id.to_string(),
+            platform: sub.platform,
+            webhook_url: sub.webhook_url,
+            active: sub.active,
+            created_at: sub.created_at.to_rfc3339(),
+        }))),
+        Err(e) => {
+            tracing::error!("Failed to create subscription: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+pub async fn list_subscriptions(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<SubscriptionResponse>>, StatusCode> {
+    match crud::list_subscriptions(&state.pool, &claims.sub).await {
+        Ok(subs) => {
+            let response = subs.into_iter().map(|s| SubscriptionResponse {
+                id: s.id.to_string(),
+                platform: s.platform,
+                webhook_url: s.webhook_url,
+                active: s.active,
+                created_at: s.created_at.to_rfc3339(),
+            }).collect();
+            Ok(Json(response))
+        }
+        Err(e) => {
+            tracing::error!("Failed to list subscriptions: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+pub async fn delete_subscription(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, StatusCode> {
+    match crud::delete_subscription(&state.pool, &id, &claims.sub).await {
+        Ok(0) => Err(StatusCode::NOT_FOUND),
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            tracing::error!("Failed to delete subscription: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }

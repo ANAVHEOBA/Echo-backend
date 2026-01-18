@@ -105,11 +105,8 @@ async fn gmail_webhook_handles_duplicate_events() {
     let response2 = app.clone().oneshot(request2).await.unwrap();
     
     // Controller logic: if duplicate, it returns error or ignores.
-    // Current impl: create_event returns error on duplicate. 
-    // Let's see controllers.rs: match crud::create_event... Err(_) => INTERNAL_SERVER_ERROR.
-    // So we expect 500 for duplicate.
-    // Ideally it should be 200 (idempotent), but based on current code it's 500.
-    assert_eq!(response2.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    // We updated controller to handle duplicates gracefully (idempotency).
+    assert_eq!(response2.status(), StatusCode::OK);
 }
 
 #[tokio::test]

@@ -50,7 +50,7 @@ pub struct EventLog {
 #[derive(Debug, FromRow, Serialize, Deserialize)]
 pub struct WebhookSubscription {
     pub id: Uuid,
-    pub user_id: String,
+    pub user_id: Uuid,
     pub platform: String,
     pub webhook_url: String,
     pub secret: String,

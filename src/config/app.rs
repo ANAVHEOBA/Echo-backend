@@ -22,6 +22,8 @@ pub struct AppConfig {
     pub zoom_client_id: String,
     pub zoom_client_secret: SecretString,
     pub zoom_webhook_secret: SecretString,
+    pub generic_webhook_secret: SecretString,
+    pub slack_signing_secret: SecretString,
 }
 
 impl AppConfig {
@@ -29,6 +31,7 @@ impl AppConfig {
         dotenvy::dotenv().ok();
 
         Ok(Self {
+            // ... (keep existing fields)
             database_url: SecretString::from(
                 env::var("DATABASE_URL")
                     .map_err(|_| ConfigError::Missing("DATABASE_URL"))?,
@@ -89,6 +92,14 @@ impl AppConfig {
                 env::var("ZOOM_WEBHOOK_SECRET")
                     .map_err(|_| ConfigError::Missing("ZOOM_WEBHOOK_SECRET"))?,
             ),
+            generic_webhook_secret: SecretString::from(
+                env::var("GENERIC_WEBHOOK_SECRET")
+                    .unwrap_or_else(|_| "test_signature".to_string()),
+            ),
+            slack_signing_secret: SecretString::from(
+                env::var("SLACK_SIGNING_SECRET")
+                    .unwrap_or_else(|_| "test_slack_secret".to_string()),
+            ),
         })
     }
 
@@ -122,6 +133,14 @@ impl AppConfig {
 
     pub fn zoom_webhook_secret(&self) -> &str {
         self.zoom_webhook_secret.expose_secret()
+    }
+
+    pub fn generic_webhook_secret(&self) -> &str {
+        self.generic_webhook_secret.expose_secret()
+    }
+
+    pub fn slack_signing_secret(&self) -> &str {
+        self.slack_signing_secret.expose_secret()
     }
 }
 

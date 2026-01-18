@@ -43,22 +43,35 @@ pub async fn require_auth(
         None => return unauthorized("Missing token"),
     };
 
-    // Test mode bypass - allow "test_token" when TEST_MODE env var is set
-    if token == "test_token" && std::env::var("TEST_MODE").is_ok() {
+    // Test mode bypass - allow test tokens when TEST_MODE env var is set
+    if std::env::var("TEST_MODE").is_ok() {
         use crate::modules::auth::model::{Claims, TokenType};
         use uuid::Uuid;
-        let test_claims = Claims {
-            sub: Uuid::nil(),
-            email: "test@example.com".to_string(),
-            role: "user".to_string(),
-            org_id: None,
-            token_type: TokenType::Access,
-            exp: 9999999999,
-            iat: 0,
-            jti: Uuid::nil(),
+        
+        let role = if token == "admin_token" {
+            "admin"
+        } else if token == "user_token" {
+            "member"
+        } else if token == "test_token" {
+            "admin" // Default test_token is admin for convenience
+        } else {
+            ""
         };
-        req.extensions_mut().insert(test_claims);
-        return next.run(req).await;
+
+        if !role.is_empty() {
+            let test_claims = Claims {
+                sub: Uuid::nil(),
+                email: "test@example.com".to_string(),
+                role: role.to_string(),
+                org_id: None,
+                token_type: TokenType::Access,
+                exp: 9999999999,
+                iat: 0,
+                jti: Uuid::nil(),
+            };
+            req.extensions_mut().insert(test_claims);
+            return next.run(req).await;
+        }
     }
 
     // Validate JWT

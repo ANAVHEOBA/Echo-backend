@@ -1,5 +1,5 @@
 use crate::config::DbPool;
-use crate::modules::events::models::Event;
+use crate::modules::events::models::{Event, WebhookSubscription};
 use crate::modules::events::schemas::EventFilter;
 use sqlx::Row;
 use uuid::Uuid;
@@ -7,7 +7,7 @@ use uuid::Uuid;
 pub async fn create_event(
     pool: &DbPool,
     event: Event,
-) -> Result<Event, sqlx::Error> {
+) -> Result<Option<Event>, sqlx::Error> {
     let result = sqlx::query_as::<_, Event>(
         r#"
         INSERT INTO events (id, event_type, source, external_id, payload, created_at, updated_at)
@@ -23,7 +23,7 @@ pub async fn create_event(
     .bind(&event.payload)
     .bind(&event.created_at)
     .bind(&event.updated_at)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await?;
 
     Ok(result)
@@ -94,8 +94,9 @@ pub async fn mark_event_processed(
 
 pub async fn get_event_stats(
     pool: &DbPool,
-) -> Result<(i64, i64, i64), sqlx::Error> {
-    let row = sqlx::query(
+) -> Result<(i64, i64, i64, i64), sqlx::Error> {
+    // Events stats
+    let event_stats = sqlx::query(
         r#"
         SELECT 
             COUNT(*) as total,
@@ -107,9 +108,76 @@ pub async fn get_event_stats(
     .fetch_one(pool)
     .await?;
 
-    let total: i64 = row.get("total");
-    let processed: i64 = row.get("processed");
-    let pending: i64 = row.get("pending");
+    let total: i64 = event_stats.get("total");
+    let processed: i64 = event_stats.get("processed");
+    let pending: i64 = event_stats.get("pending");
 
-    Ok((total, processed, pending))
+    // Failed events stats (from event_logs)
+    let failed_stats = sqlx::query(
+        "SELECT COUNT(*) as failed FROM event_logs WHERE status = 'failed'"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let failed: i64 = failed_stats.get("failed");
+
+    Ok((total, processed, pending, failed))
+}
+
+// Subscriptions CRUD
+
+pub async fn create_subscription(
+    pool: &DbPool,
+    subscription: WebhookSubscription,
+) -> Result<WebhookSubscription, sqlx::Error> {
+    let result = sqlx::query_as::<_, WebhookSubscription>(
+        r#"
+        INSERT INTO webhook_subscriptions (id, user_id, platform, webhook_url, secret, event_types, active, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING *
+        "#
+    )
+    .bind(&subscription.id)
+    .bind(&subscription.user_id)
+    .bind(&subscription.platform)
+    .bind(&subscription.webhook_url)
+    .bind(&subscription.secret)
+    .bind(&subscription.event_types)
+    .bind(&subscription.active)
+    .bind(&subscription.created_at)
+    .bind(&subscription.updated_at)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(result)
+}
+
+pub async fn list_subscriptions(
+    pool: &DbPool,
+    user_id: &Uuid,
+) -> Result<Vec<WebhookSubscription>, sqlx::Error> {
+    let result = sqlx::query_as::<_, WebhookSubscription>(
+        "SELECT * FROM webhook_subscriptions WHERE user_id = $1 ORDER BY created_at DESC"
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(result)
+}
+
+pub async fn delete_subscription(
+    pool: &DbPool,
+    id: &Uuid,
+    user_id: &Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "DELETE FROM webhook_subscriptions WHERE id = $1 AND user_id = $2"
+    )
+    .bind(id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
 }

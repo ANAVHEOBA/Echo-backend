@@ -36,6 +36,11 @@ pub async fn create_test_config() -> AppConfig {
         google_client_secret: SecretString::from(
             std::env::var("GOOGLE_CLIENT_SECRET").expect("GOOGLE_CLIENT_SECRET must be set in .env")
         ),
+        zoom_client_id: "test_zoom_client_id".to_string(),
+        zoom_client_secret: SecretString::from("test_zoom_client_secret"),
+        zoom_webhook_secret: SecretString::from("test_zoom_webhook_secret"),
+        generic_webhook_secret: SecretString::from("test_signature"),
+        slack_signing_secret: SecretString::from("test_slack_secret"),
     }
 }
 
@@ -46,7 +51,7 @@ pub async fn setup_test_context() -> (Router, Arc<AppConfig>, PgPool, RedisPool)
     
     // Connect to database
     let pool = PgPoolOptions::new()
-        .max_connections(1)
+        .max_connections(10)
         .connect(config.database_url.expose_secret())
         .await
         .expect("Failed to connect to test database");
@@ -57,6 +62,19 @@ pub async fn setup_test_context() -> (Router, Arc<AppConfig>, PgPool, RedisPool)
             .run(&pool)
             .await
             .expect("Failed to run migrations");
+
+        // Insert test user for test_token (Uuid::nil())
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, email, password_hash, role, email_verified)
+            VALUES ($1, 'test@example.com', 'hash', 'admin', true)
+            ON CONFLICT (id) DO NOTHING
+            "#
+        )
+        .bind(uuid::Uuid::nil())
+        .execute(&pool)
+        .await
+        .expect("Failed to seed test user");
     }).await;
 
     let redis = echo_backend::config::create_redis_pool(&config).await

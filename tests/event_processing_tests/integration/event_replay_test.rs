@@ -20,7 +20,7 @@ use uuid::Uuid;
 // =============================================================================
 
 fn sample_event_id() -> String {
-    format!("evt_{}", Uuid::new_v4())
+    format!("{}", Uuid::new_v4())
 }
 
 
